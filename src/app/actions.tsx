@@ -12,29 +12,39 @@ interface TestRequest {
   created_at: string;
   is_generating: boolean;
 }
-import { createClient } from "@supabase/supabase-js";
-const supabase = createClient("https://qwsfuitvqvtfnbtwodcp.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF3c2Z1aXR2cXZ0Zm5idHdvZGNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0MjE3NDcsImV4cCI6MjA3MDk5Nzc0N30.iNss6Q9bOlkWlRP_QHaqb1da3sw5fUZftnp2bhV_Z3Q"
-);
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+// Clients are created lazily so a missing variable fails the request, not the build.
+let supabaseClient: SupabaseClient | undefined;
+function getSupabase() {
+  supabaseClient ??= createClient(requireEnv("SUPABASE_URL"), requireEnv("SUPABASE_ANON_KEY"));
+  return supabaseClient;
+}
 export async function loadProjectsFromDb() {
-   return await supabase.from("projects").select("*").order("created_at", { ascending: false });
+   return await getSupabase().from("projects").select("*").order("created_at", { ascending: false });
 }
 export async function loadProjectBySlug(projectSlug: string) {
-  return await supabase
+  return await getSupabase()
         .from("projects")
         .select("*")
         .eq("slug", projectSlug)
         .single();
 }
 export async function loadTestRequestsByProject(projectId: string) {
-  return await supabase
+  return await getSupabase()
         .from("test_requests")
         .select("*")
         .eq("project_id", projectId)
         .order("created_at", { ascending: false });
 }
 export async function createProject(name: string, description: string, slug: string) {
-  return await supabase
+  return await getSupabase()
         .from("projects")
         .insert([
           { slug, name: name, description: description }
@@ -44,7 +54,7 @@ export async function createProject(name: string, description: string, slug: str
 }
 
 export async function createTestRequest(projectId: string, swagger_json: string, additional_prompt: string, selected_language: string) {
-  return await supabase
+  return await getSupabase()
       .from("test_requests")
       .insert([
         {
@@ -60,7 +70,7 @@ export async function createTestRequest(projectId: string, swagger_json: string,
       .single();
 }
 export async function updateTestRequest(requestId: string, generated_tests: string) {
-  return await supabase
+  return await getSupabase()
       .from("test_requests")
       .update({
         generated_tests: generated_tests,
@@ -71,7 +81,7 @@ export async function updateTestRequest(requestId: string, generated_tests: stri
       .single(); 
 }
 export async function updateTestRequestData(requestId: string, updatedData: Partial<TestRequest>) {
-  return await supabase
+  return await getSupabase()
       .from("test_requests")
       .update(updatedData)
       .eq("id", requestId)
@@ -79,25 +89,29 @@ export async function updateTestRequestData(requestId: string, updatedData: Part
       .single();
 }
 export async function deleteTestRequest(requestId: string) {
-  return await supabase
+  return await getSupabase()
       .from("test_requests")
       .delete()
       .eq("id", requestId);
 } 
 export async function validateLogin(username: string, password:string) {
-    if (username!="admin" || password!="@$min955") {
+    if (username!=requireEnv("ADMIN_USERNAME") || password!=requireEnv("ADMIN_PASSWORD")) {
         return false;
     }
     else{
        return true;
     }
 }
-const llm = new ChatTogetherAI({
-  apiKey: "053d443ca7bcc5cd4837d34dd5a2b3efe3938ded75f4bf8618105da486b51aef",
-  modelName: 'mistralai/Mixtral-8x7B-Instruct-v0.1',
-  temperature: 0.3, 
-  maxTokens: 2000,
-});
+let llm: ChatTogetherAI | undefined;
+function getLlm() {
+  llm ??= new ChatTogetherAI({
+    apiKey: requireEnv("TOGETHER_API_KEY"),
+    modelName: 'mistralai/Mixtral-8x7B-Instruct-v0.1',
+    temperature: 0.3,
+    maxTokens: 2000,
+  });
+  return llm;
+}
 export async function generateAITests(swagger_json: string, language: string = 'JAVA', custom_prompt: string = 'Generate 2 positive and 2 negative test cases', previousRequests: TestRequest[]) {
   try {
     // --- Create vector store from ALL project history ---
@@ -122,7 +136,7 @@ export async function generateAITests(swagger_json: string, language: string = '
   const docs = await splitter.createDocuments(allDocs);
 
   const vectorStore = await MemoryVectorStore.fromDocuments(docs, 
-    new HuggingFaceInferenceEmbeddings({ apiKey: "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",
+    new HuggingFaceInferenceEmbeddings({ apiKey: requireEnv("HUGGINGFACE_API_KEY"),
         model: 'sentence-transformers/all-MiniLM-L6-v2'}));
 
   const relevantDocs = await vectorStore.similaritySearch(custom_prompt, 5);
@@ -158,7 +172,7 @@ export async function generateAITests(swagger_json: string, language: string = '
         : "Requests"
     }.
   `;
-    const response = await llm.invoke(fullPrompt);
+    const response = await getLlm().invoke(fullPrompt);
     const output = response?.content || '';
     return output.toString().trim();
   } catch (error: any) {

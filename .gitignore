@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local env files are ignored above; keep the template
+!.env.example
+
+# IDE
+.vs/
